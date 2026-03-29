@@ -1,0 +1,31 @@
+{
+  "name": "@openagent/core",
+  "version": "1.0.0",
+  "description": "OpenAgent core: provider abstraction, tool registry, agent runner, WeChat iLink helpers",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./provider": "./src/provider.js",
+    "./registry": "./src/registry.js",
+    "./agent": "./src/agent.js",
+    "./weixin": "./src/weixin/index.js"
+  },
+  "files": ["src"],
+  "dependencies": {
+    "@langchain/core": "^0.3.0",
+    "@langchain/langgraph": "^0.2.0",
+    "@langchain/openai": "^0.3.0",
+    "qrcode-terminal": "^0.12.0",
+    "zod": "^3.23.8"
+  },
+  "peerDependencies": {
+    "zod": "^3.0.0",
+    "@tencent-weixin/openclaw-weixin": ">=2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@tencent-weixin/openclaw-weixin": {
+      "optional": true
+    }
+  }
+}

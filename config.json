@@ -1,0 +1,26 @@
+{
+  "ollama": {
+    "name": "ollama",
+    "options": {
+      "baseURL": "http://localhost:11434/v1",
+      "temperature": 0.7,
+      "maxTokens": 4096
+    },
+    "models": {
+      "llama3.2": { "name": "llama3.2" },
+      "qwen2.5": { "name": "qwen2.5" }
+    }
+  },
+  "volcengine": {
+    "name": "volcengine",
+    "options": {
+      "baseURL": "https://ark.cn-beijing.volces.com/api/v3",
+      "apiKey": "",
+      "temperature": 0.7,
+      "maxTokens": 4096
+    },
+    "models": {
+      "doubao-seed-1.6": { "name": "doubao-seed-1.6" }
+    }
+  }
+}

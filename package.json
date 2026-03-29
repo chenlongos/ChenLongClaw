@@ -1,0 +1,26 @@
+{
+  "name": "chenlong-claw",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claw 小车/机械臂 Agent：基于 OpenAgent，微信 iLink 对话 + 工具桩（console.log）",
+  "scripts": {
+    "preinstall": "node scripts/vendor-openagent-core.mjs",
+    "vendor:openagent": "node scripts/vendor-openagent-core.mjs",
+    "start": "node src/weixin-claw.js",
+    "repl": "node src/repl.js",
+    "weixin-login": "node --import=dotenv/config --input-type=module -e \"import { runWeixinIlinkQrLogin } from '@openagent/core'; await runWeixinIlinkQrLogin({});\""
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.0",
+    "@langchain/langgraph": "^0.2.0",
+    "@langchain/openai": "^0.3.0",
+    "@openagent/core": "file:./vendor/openagent-core",
+    "@tencent-weixin/openclaw-weixin": "^2.1.1",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
