@@ -3,6 +3,28 @@
  */
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
+import { reminderTools } from './reminderTools.js';
+
+function captureStub(resolution) {
+  const res = resolution ?? 'medium';
+  const image_url = `https://example.invalid/claw/capture?res=${res}&t=${Date.now()}`;
+  return {
+    ok: true,
+    resolution: res,
+    image_url,
+    message: '已获取图像（桩，未接真实摄像头）',
+  };
+}
+
+function navigateStub({ target_x_m, target_y_m, theta_deg }) {
+  return {
+    ok: true,
+    target_x_m,
+    target_y_m,
+    theta_deg: theta_deg ?? null,
+    message: '小车导航指令已下发（桩）',
+  };
+}
 
 /** 远程识图桩：随机生成目标在画面中的位置（归一化 + 像素），便于联调路径规划 */
 function randomVisionStub(prompt) {
@@ -35,6 +57,54 @@ function randomVisionStub(prompt) {
   };
 }
 
+/**
+ * 组合工具：顺序在代码里写死（导航 → 拍照 → 可选识图），不依赖提示词约束。
+ * 「原地拍」「只识图不传导航」仍用 camera_capture / vision_recognize_remote。
+ */
+const navigateObserve = new DynamicStructuredTool({
+  name: 'navigate_observe',
+  description:
+    '开到目标位姿后立刻拍照，并可选用 vision_prompt 做识图。适用于「到某处再看有没有某物」；顺序由本工具内部保证。若用户只要当前位置拍一张、不要动车，请改用 camera_capture。',
+  schema: z.object({
+    target_x_m: z.number().describe('目标 X（米）'),
+    target_y_m: z.number().describe('目标 Y（米）'),
+    theta_deg: z.number().optional().nullable().describe('车头朝向（度）'),
+    resolution: z.enum(['low', 'medium', 'high']).optional().nullable().describe('拍照分辨率'),
+    vision_prompt: z
+      .string()
+      .optional()
+      .nullable()
+      .describe('非空则在拍照后执行远程识图；省略则仅导航+拍照'),
+  }),
+  func: async ({ target_x_m, target_y_m, theta_deg, resolution, vision_prompt }) => {
+    const steps = [];
+    const nav = navigateStub({ target_x_m, target_y_m, theta_deg });
+    steps.push({ phase: 'navigate', result: nav });
+    const cap = captureStub(resolution ?? undefined);
+    steps.push({ phase: 'capture', result: cap });
+    let visionResult = null;
+    if (vision_prompt != null && String(vision_prompt).trim()) {
+      const p = String(vision_prompt).trim();
+      visionResult = {
+        ok: true,
+        simulated: true,
+        message: '远程识图完成（桩）',
+        image_url: cap.image_url,
+        ...randomVisionStub(p),
+      };
+      steps.push({ phase: 'vision', result: visionResult });
+    }
+    return JSON.stringify({
+      ok: true,
+      chained: true,
+      phases: ['navigate', 'capture', ...(visionResult ? ['vision'] : [])],
+      steps,
+      final_image_url: cap.image_url,
+      vision: visionResult,
+    });
+  },
+});
+
 const carNavigateTo = new DynamicStructuredTool({
   name: 'car_navigate_to',
   description:
@@ -44,15 +114,7 @@ const carNavigateTo = new DynamicStructuredTool({
     target_y_m: z.number().describe('目标 Y（米）'),
     theta_deg: z.number().optional().nullable().describe('到达后车头朝向（度），省略则由规划器决定'),
   }),
-  func: async ({ target_x_m, target_y_m, theta_deg }) => {
-    return JSON.stringify({
-      ok: true,
-      target_x_m,
-      target_y_m,
-      theta_deg: theta_deg ?? null,
-      message: '小车导航指令已下发（桩）',
-    });
-  },
+  func: async (args) => JSON.stringify(navigateStub(args)),
 });
 
 const armMoveTo = new DynamicStructuredTool({
@@ -147,26 +209,20 @@ const armGrasp = new DynamicStructuredTool({
 
 const cameraCapture = new DynamicStructuredTool({
   name: 'camera_capture',
-  description: '从车载/机械臂摄像头采集一帧图像，返回占位 URL 或 base64（桩）。',
+  description:
+    '仅拍当前视角一帧（桩）。需要「先开到某处再观察」请用 navigate_observe，由程序保证顺序。',
   schema: z.object({
     resolution: z.enum(['low', 'medium', 'high']).optional().nullable().describe('分辨率档位'),
   }),
   func: async ({ resolution }) => {
-    const res = resolution ?? 'medium';
-    const stubUrl = `https://example.invalid/claw/capture?res=${res}&t=${Date.now()}`;
-    return JSON.stringify({
-      ok: true,
-      resolution: res,
-      image_url: stubUrl,
-      message: '已获取图像（桩，未接真实摄像头）',
-    });
+    return JSON.stringify(captureStub(resolution ?? undefined));
   },
 });
 
 const visionRecognizeRemote = new DynamicStructuredTool({
   name: 'vision_recognize_remote',
   description:
-    '将图像送到远程视觉服务识别（如已有 image_url 或上一工具返回的地址）。返回是否识别到目标、置信度与目标在画面中的位置（用于导航/抓取）。',
+    '对指定图像做远程识图（桩）。可与 camera_capture 搭配；「导航+拍+识」一条龙请用 navigate_observe。',
   schema: z.object({
     image_url: z.string().url().optional().nullable().describe('可公开访问的图片 URL'),
     image_base64: z.string().optional().nullable().describe('若无 URL，可传 base64 数据（桩）'),
@@ -184,6 +240,7 @@ const visionRecognizeRemote = new DynamicStructuredTool({
 });
 
 export const clawTools = {
+  navigate_observe: navigateObserve,
   car_navigate_to: carNavigateTo,
   arm_move_to: armMoveTo,
   arm_pick: armPick,
@@ -192,4 +249,5 @@ export const clawTools = {
   arm_grasp: armGrasp,
   camera_capture: cameraCapture,
   vision_recognize_remote: visionRecognizeRemote,
+  ...reminderTools,
 };

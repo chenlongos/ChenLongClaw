@@ -16,11 +16,16 @@ import {
   defaultBaseUrl,
   ensureWeixinIlinkLogin,
 } from '@openagent/core';
+import { startReminderScheduler } from './reminderScheduler.js';
 import { createModelFromConfig } from './createModel.js';
 import { clawTools } from './clawTools.js';
 import { startWeixinInboundPoller } from './weixinInbound.js';
 import { CLAW_SYSTEM_PROMPT, CLAW_WEIXIN_SYSTEM_PROMPT } from './systemPrompt.js';
-import { createClawToolCallbacks } from './toolCallbacks.js';
+import {
+  createWeixinToolCallbacks,
+  mergeWeixinReplyAfterReminders,
+  extractReminderSuccessesFromAgentState,
+} from './reminderReplyFix.js';
 
 const skipWeixinQr = process.argv.includes('--no-weixin-login');
 const skipWeixinInbound = process.argv.includes('--no-weixin-inbound');
@@ -58,17 +63,37 @@ const skipWeixinAutoReply = process.argv.includes('--no-weixin-auto-reply');
 
   const wxHistories = new Map();
 
+  let stopReminders = () => {};
+  if (process.env.WEIXIN_ILINK_TOKEN?.trim()) {
+    stopReminders = startReminderScheduler(async (row) => {
+      await sendTextMessage({
+        baseUrl: defaultBaseUrl(),
+        token: process.env.WEIXIN_ILINK_TOKEN,
+        toUserId: row.toUserId,
+        text: row.text,
+        contextToken: row.contextToken || undefined,
+      });
+    });
+    console.log('[reminder] 定时提醒已启用（数据 ~/.openagent/chenlong-reminders.json）\n');
+  }
+
   async function handleWeixinInbound({ text, fromUserId, contextToken }) {
     try {
       let hist = wxHistories.get(fromUserId) || [];
       hist = trimHistory(hist, { maxMessages: 24, maxApproxChars: 12000 });
       const userLine = text;
       console.log(`收到命令：${userLine}，正在拆解执行`);
+      const { reminderSuccesses, callbacks } = createWeixinToolCallbacks();
+      let lastStateReminders = [];
       const { text: reply } = await agentWeixin.chat(userLine, hist, {
         toolRetries: 1,
-        ...createClawToolCallbacks(),
+        ...callbacks,
+        onStep: (state) => {
+          lastStateReminders = extractReminderSuccessesFromAgentState(state);
+        },
       });
-      const out = (reply || '（无回复）').trim() || '…';
+      const mergedReminders = [...reminderSuccesses, ...lastStateReminders];
+      const out = mergeWeixinReplyAfterReminders(reply, mergedReminders);
       hist.push({ role: 'user', content: userLine });
       hist.push({ role: 'assistant', content: out });
       wxHistories.set(fromUserId, hist);
@@ -116,6 +141,7 @@ const skipWeixinAutoReply = process.argv.includes('--no-weixin-auto-reply');
       }
       if (input === 'exit' || input === 'quit') {
         stopInbound();
+        stopReminders();
         rl.close();
         process.exit(0);
       }
@@ -126,13 +152,19 @@ const skipWeixinAutoReply = process.argv.includes('--no-weixin-auto-reply');
       }
       try {
         console.log(`收到命令：${input}，正在拆解执行`);
+        const { reminderSuccesses, callbacks } = createWeixinToolCallbacks();
+        let lastStateReminders = [];
         const { text } = await agent.chat(input, history, {
           toolRetries: 1,
-          ...createClawToolCallbacks(),
+          ...callbacks,
+          onStep: (state) => {
+            lastStateReminders = extractReminderSuccessesFromAgentState(state);
+          },
         });
-        console.log('\nAgent:', text || '（无回复）');
+        const merged = mergeWeixinReplyAfterReminders(text, [...reminderSuccesses, ...lastStateReminders]);
+        console.log('\nAgent:', merged || '（无回复）');
         history.push({ role: 'user', content: input });
-        history.push({ role: 'assistant', content: text || '' });
+        history.push({ role: 'assistant', content: merged || '' });
       } catch (err) {
         console.error('错误:', err instanceof Error ? err.message : err);
       }
@@ -145,6 +177,7 @@ const skipWeixinAutoReply = process.argv.includes('--no-weixin-auto-reply');
 
   process.once('SIGINT', () => {
     stopInbound();
+    stopReminders();
     try {
       rl.close();
     } catch {
