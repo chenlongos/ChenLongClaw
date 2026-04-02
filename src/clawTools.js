@@ -175,6 +175,58 @@ const armPlace = new DynamicStructuredTool({
   },
 });
 
+function carHttpBaseUrl() {
+  return process.env.CAR_HTTP_BASE_URL?.trim() || 'http://172.16.203.160';
+}
+
+/** 设备约定：query 参数 time 为毫秒（ms）。例如 1 秒 → time=1000 */
+async function carControlHttp({ action, speed, time_ms }) {
+  const base = carHttpBaseUrl().replace(/\/+$/, '');
+  const url = new URL(`${base}/api/control`);
+  url.searchParams.set('action', action);
+  url.searchParams.set('speed', String(speed));
+  url.searchParams.set('time', String(Math.max(1, Math.round(time_ms))));
+  const resp = await fetch(url.toString(), { method: 'GET' });
+  const text = await resp.text().catch(() => '');
+  return {
+    ok: resp.ok,
+    http_status: resp.status,
+    url: url.toString(),
+    response_text: text?.slice(0, 500) || '',
+  };
+}
+
+const carControlHttpTool = new DynamicStructuredTool({
+  name: 'car_control_http',
+  description:
+    '通过 HTTP GET 控制小车：GET /api/control?action=up|down|left|right&speed=150&time=毫秒。time 为 ms（如 1 秒填 duration_s=1 或 duration_ms=1000）。可用 CAR_HTTP_BASE_URL 覆盖小车地址。',
+  schema: z.object({
+    action: z.enum(['up', 'down', 'left', 'right']).describe('方向：up/down/left/right'),
+    speed: z.number().int().min(0).max(255).optional().nullable().describe('速度 0~255，默认 150'),
+    duration_s: z.number().positive().optional().nullable().describe('持续秒数，与 duration_ms 二选一；如 1 表示 1 秒→请求 time=1000'),
+    duration_ms: z.number().int().positive().optional().nullable().describe('持续毫秒数，与 duration_s 二选一；如 1000 表示 1 秒'),
+  }),
+  func: async ({ action, speed, duration_s, duration_ms }) => {
+    const s = speed ?? 150;
+    let time_ms;
+    if (duration_ms != null) {
+      time_ms = duration_ms;
+    } else if (duration_s != null) {
+      time_ms = Math.round(duration_s * 1000);
+    } else {
+      time_ms = 1000;
+    }
+    const result = await carControlHttp({ action, speed: s, time_ms });
+    return JSON.stringify({
+      ...result,
+      action,
+      speed: s,
+      time_ms,
+      message: result.ok ? '小车 HTTP 控制成功' : '小车 HTTP 控制失败',
+    });
+  },
+});
+
 const carMove = new DynamicStructuredTool({
   name: 'car_move',
   description:
@@ -191,7 +243,16 @@ const carMove = new DynamicStructuredTool({
   }),
   func: async ({ direction, duration_ms }) => {
     const ms = duration_ms ?? 1000;
-    return JSON.stringify({ ok: true, direction, duration_ms: ms, message: '小车指令已下发（桩）' });
+    // forward/backward → up/down；duration_ms 直接作为设备 time（毫秒）
+    const action = direction === 'forward' ? 'up' : 'down';
+    const result = await carControlHttp({ action, speed: 150, time_ms: ms });
+    return JSON.stringify({
+      ...result,
+      direction,
+      mapped_action: action,
+      duration_ms: ms,
+      message: result.ok ? '小车指令已下发（HTTP）' : '小车指令下发失败（HTTP）',
+    });
   },
 });
 
@@ -246,6 +307,7 @@ export const clawTools = {
   arm_pick: armPick,
   arm_place: armPlace,
   car_move: carMove,
+  car_control_http: carControlHttpTool,
   arm_grasp: armGrasp,
   camera_capture: cameraCapture,
   vision_recognize_remote: visionRecognizeRemote,
