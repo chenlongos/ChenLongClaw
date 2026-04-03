@@ -26,6 +26,7 @@ import {
   mergeWeixinReplyAfterReminders,
   extractReminderSuccessesFromAgentState,
 } from './reminderReplyFix.js';
+import { blue } from './cliColors.js';
 
 const skipWeixinQr = process.argv.includes('--no-weixin-login');
 const skipWeixinInbound = process.argv.includes('--no-weixin-inbound');
@@ -51,14 +52,14 @@ const skipWeixinAutoReply = process.argv.includes('--no-weixin-auto-reply');
     model,
     getTools: () => registry.getTools(),
     systemPrompt: CLAW_SYSTEM_PROMPT,
-    maxSteps: 10,
+    maxSteps: 18,
   });
 
   const agentWeixin = createAgent({
     model,
     getTools: () => registry.getTools(),
     systemPrompt: CLAW_WEIXIN_SYSTEM_PROMPT,
-    maxSteps: 10,
+    maxSteps: 18,
   });
 
   const wxHistories = new Map();
@@ -82,7 +83,7 @@ const skipWeixinAutoReply = process.argv.includes('--no-weixin-auto-reply');
       let hist = wxHistories.get(fromUserId) || [];
       hist = trimHistory(hist, { maxMessages: 24, maxApproxChars: 12000 });
       const userLine = text;
-      console.log(`收到命令：${userLine}，正在拆解执行`);
+      console.log(blue(`收到命令：${userLine}，正在拆解执行`));
       const { reminderSuccesses, callbacks } = createWeixinToolCallbacks();
       let lastStateReminders = [];
       const { text: reply } = await agentWeixin.chat(userLine, hist, {
@@ -151,7 +152,7 @@ const skipWeixinAutoReply = process.argv.includes('--no-weixin-auto-reply');
         return;
       }
       try {
-        console.log(`收到命令：${input}，正在拆解执行`);
+        console.log(blue(`收到命令：${input}，正在拆解执行`));
         const { reminderSuccesses, callbacks } = createWeixinToolCallbacks();
         let lastStateReminders = [];
         const { text } = await agent.chat(input, history, {

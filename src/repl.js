@@ -9,6 +9,7 @@ import { createModelFromConfig } from './createModel.js';
 import { clawTools } from './clawTools.js';
 import { CLAW_SYSTEM_PROMPT } from './systemPrompt.js';
 import { createClawToolCallbacks } from './toolCallbacks.js';
+import { blue } from './cliColors.js';
 
 const { model } = createModelFromConfig(process.cwd());
 
@@ -19,7 +20,7 @@ const agent = createAgent({
   model,
   getTools: () => registry.getTools(),
   systemPrompt: CLAW_SYSTEM_PROMPT,
-  maxSteps: 10,
+  maxSteps: 18,
 });
 
 const history = [];
@@ -46,7 +47,7 @@ function ask() {
       return;
     }
     try {
-      console.log(`收到命令：${input}，正在拆解执行`);
+      console.log(blue(`收到命令：${input}，正在拆解执行`));
       const { text } = await agent.chat(input, history, {
         toolRetries: 1,
         ...createClawToolCallbacks(),

@@ -1,15 +1,24 @@
 /**
- * LangChain / OpenAI 等在单次请求里可能对同一 AbortSignal 注册多个 abort 监听，
- * Node 对 EventTarget 默认 maxListeners=10，会触发 MaxListenersExceededWarning。
+ * LangChain / OpenAI / LangGraph 等会在同一 AbortSignal 上叠加较多 abort 监听，
+ * Node 对 EventTarget 默认 maxListeners 较低，会触发 MaxListenersExceededWarning。
  * 在其它模块之前 import 本文件（见 weixin-claw.js / repl.js）。
  */
 import { EventEmitter, setMaxListeners } from 'node:events';
 
-const N = Math.max(EventEmitter.defaultMaxListeners, 32);
-EventEmitter.defaultMaxListeners = N;
+/** 实测链式调用可达 30+，32 仍不够，留足余量 */
+const N = 256;
+EventEmitter.defaultMaxListeners = Math.max(EventEmitter.defaultMaxListeners, N);
 
 try {
   setMaxListeners(N, process);
+} catch {
+  /* ignore */
+}
+
+try {
+  if (typeof AbortSignal !== 'undefined' && AbortSignal.prototype) {
+    setMaxListeners(N, AbortSignal.prototype);
+  }
 } catch {
   /* ignore */
 }

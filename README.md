@@ -32,7 +32,8 @@
 
 ## 工具（桩）
 
-- `car_move`：前进 / 后退  
+- `car_move`：开环，`moves: [{ action, duration_ms }]` → `/api/control`（`CAR_HTTP_BASE_URL`）  
+- `car_navigate_to`：目标位姿（`CAR_NAVIGATE_PATH`）；拍照、识图请再调 `camera_capture`、`vision_recognize_remote`  
 - `arm_grasp`：抓取 / 松开  
 - `camera_capture`：取图（返回占位 URL）  
 - `vision_recognize_remote`：远程识图（占位结果）
