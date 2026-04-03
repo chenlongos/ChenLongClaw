@@ -9,15 +9,17 @@
 
 ## 配置
 
-- 复制 `.env.example` 为 `.env`，按需填写 `OPENAGENT_PROVIDER`、`OPENAGENT_MODEL` 等。
+- 首次进入仓库先执行 **`npm run setup`**（安装依赖并生成 vendor、打补丁；若已有 `.env.example` 会复制为 `.env`）。
+- 按需编辑 `.env`（`OPENAGENT_PROVIDER`、`OPENAGENT_MODEL` 等）；若 `setup` 未生成 `.env`，可手动复制 `.env.example`。
 - 根目录 `config.json` 与 OpenAgent 约定一致：`provider` → `name` / `options` / `models`。
 
 ## 命令
 
 | 命令 | 说明 |
 |------|------|
-| `npm run vendor:openagent` | 从 [OpenAgent](https://github.com/asmcos/OpenAgent) 拉取 `packages/core` 生成 `vendor/openagent-core`，并写入补丁（见下） |
-| `npm install` | 会先执行 `preinstall`：若本地尚无完整 `vendor/openagent-core`，则自动执行与上一行相同的生成步骤（需要 **git** 与网络） |
+| **`npm run setup`** | **推荐首次克隆后执行**：脚本里**按顺序显式执行** `scripts/vendor-openagent-core.mjs` → `npm install --ignore-scripts` → `scripts/patch-langgraph-react-agent.mjs`（见 `scripts/setup.mjs` 注释）；若存在 `.env.example` 且无 `.env` 会复制一份 |
+| `npm install` | 不跑 setup 时可用：会走 `package.json` 的 **`preinstall`**（同 vendor 脚本）与 **`postinstall`**（同补丁脚本），需要 **git** 与网络 |
+| `npm run vendor:openagent` | 仅重新生成 `vendor/openagent-core`（与 `preinstall` 同源；可设 `OPENAGENT_FORCE_VENDOR=1`） |
 | `npm run repl` | 仅终端对话（不启微信入站） |
 | `npm start` | 微信凭证 + 入站轮询 + 本地 REPL |
 | `npm run weixin-login` | 仅扫码，写入 `~/.openagent/weixin-ilink.json` |

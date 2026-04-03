@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Claw 小车/机械臂 Agent：基于 OpenAgent，微信 iLink 对话 + 工具桩（console.log）",
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "postinstall": "node scripts/patch-langgraph-react-agent.mjs",
     "preinstall": "node scripts/vendor-openagent-core.mjs",
     "vendor:openagent": "node scripts/vendor-openagent-core.mjs",
