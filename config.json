@@ -23,5 +23,18 @@
       "doubao-seed-1.6": { "name": "doubao-seed-1.6" },
       "deepseek-v3.2": { "name": "deepseek-v3.2" }
     }
-  }
+  },
+  "deepseek":{
+   "name":"deepseek",
+    "options": {
+      "baseURL": "https://api.deepseek.com/v1",
+      "apiKey":"",
+      "temperature": 0.2,
+      "maxTokens": 4096
+    },
+    "models": {
+      "deepseek-v4-flash": { "name": "deepseek-v4-flash" }
+    }
+
+    }
 }

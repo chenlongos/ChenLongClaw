@@ -39,3 +39,26 @@ registerProvider('ollama', (options) => {
     },
   };
 });
+
+registerProvider('deepseek', (options) => {
+  const {
+    baseURL = 'https://api.deepseek.com/v1',
+    apiKey,
+    temperature = 0.2,
+    maxTokens,
+  } = options;
+  if (!apiKey) throw new Error('volcengine 需要 options.apiKey');
+  return {
+    chatModel(modelId) {
+      return new ChatOpenAI({
+        openAIApiKey: apiKey,
+        configuration: { baseURL },
+        model: modelId,
+        temperature,
+        ...(maxTokens != null ? { maxTokens } : {}),
+      });
+    },
+  };
+});
+
+

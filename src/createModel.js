@@ -4,8 +4,11 @@ import { createProvider, getProviderConfig, getFirstProviderKey, getEnvPrefix } 
 //const DEFAULT_PROVIDER = 'ollama';
 //const DEFAULT_MODEL = 'kimi-k2.5:cloud';
 
-const DEFAULT_PROVIDER = 'volcengine';
-const DEFAULT_MODEL = 'deepseek-v3.2';
+//const DEFAULT_PROVIDER = 'volcengine';
+//const DEFAULT_MODEL = 'deepseek-v3.2';
+
+const DEFAULT_PROVIDER = 'deepseek';
+const DEFAULT_MODEL = 'deepseek-v4-flash';
 /**
  * 从项目根 config.json + 环境变量解析 Chat 模型（与 OpenAgent 示例一致）
  */
