@@ -3,6 +3,8 @@
  */
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 import { reminderTools } from './reminderTools.js';
 
 function carHttpBaseUrl() {
@@ -112,7 +114,7 @@ async function carControlHttp({ action, speed, time_ms }) {
 
 /** 按顺序执行多段开环（up/down/left/right + 时长），任意多边形/折线 */
 async function runHttpPathSegments({ segments, speed }) {
-  const s = speed ?? 50;
+  const s = speed ?? 30;
   const steps = [];
   const batch_lines = [];
   const total = segments.length;
@@ -122,6 +124,7 @@ async function runHttpPathSegments({ segments, speed }) {
     const q = new URL(r.url).searchParams.toString();
     batch_lines.push(`第${i + 1}/${total}批 ${seg.http_action} ${seg.duration_ms}ms · ${q}`);
     steps.push({ index: i + 1, http_action: seg.http_action, duration_ms: seg.duration_ms, ...r });
+    if (i < total - 1) await sleep(seg.duration_ms);
   }
   const ok = steps.every((st) => st.ok);
   return { ok, steps, batch_lines, speed: s };
