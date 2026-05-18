@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { reminderTools } from './reminderTools.js';
 
 function carHttpBaseUrl() {
-  return process.env.CAR_HTTP_BASE_URL?.trim() || 'http://172.16.203.160';
+  return process.env.CAR_HTTP_BASE_URL?.trim() || 'http://172.16.203.173';
 }
 
 /**
@@ -84,12 +84,13 @@ async function carNavigatePoseHttp({ target_x_m, target_y_m, theta_deg }) {
 async function carControlHttp({ action, speed, time_ms }) {
   const base = carHttpBaseUrl().replace(/\/+$/, '');
   const url = new URL(`${base}/api/control`);
+  console.log('url', url.toString());
   url.searchParams.set('action', action);
   url.searchParams.set('speed', String(speed));
   url.searchParams.set('time', String(Math.max(1, Math.round(time_ms))));
   try {
-    const resp = {"ok":true, "status": 200, "text": ""};
-    //await fetch(url.toString(), { method: 'GET' });
+    // const resp = {"ok":true, "status": 200, "text": ""};
+    await fetch(url.toString(), { method: 'GET' });
     const text = "success";//await resp.text().catch(() => '');
     return {
       ok: resp.ok,
@@ -111,7 +112,7 @@ async function carControlHttp({ action, speed, time_ms }) {
 
 /** 按顺序执行多段开环（up/down/left/right + 时长），任意多边形/折线 */
 async function runHttpPathSegments({ segments, speed }) {
-  const s = speed ?? 150;
+  const s = speed ?? 50;
   const steps = [];
   const batch_lines = [];
   const total = segments.length;
@@ -231,7 +232,7 @@ const carMoveSchema = z.object({
     .describe(
       '按顺序执行，每段一次 HTTP。单步只传 1 条；正方形常见 8 段 up 与 right 交替（四边+四角）'
     ),
-  speed: z.number().int().min(0).max(255).optional().nullable().describe('速度 0~255，默认 150'),
+  speed: z.number().int().min(0).max(100).optional().nullable().describe('速度 0~100，默认 50'),
 });
 
 /** 开环底盘：moves 即「前后左右 + 时长」，无 mode 嵌套 */
