@@ -500,7 +500,7 @@ const HTML = `<!DOCTYPE html>
           serverMsgCount = data.messages.length;
         }
       } catch (e) { console.error('poll error:', e); }
-    }, 3000);
+    }, 1000);
   }
 
   async function syncMsgCount() {
