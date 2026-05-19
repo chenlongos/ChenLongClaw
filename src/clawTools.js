@@ -86,14 +86,12 @@ async function carNavigatePoseHttp({ target_x_m, target_y_m, theta_deg }) {
 async function carControlHttp({ action, speed, time_ms }) {
   const base = carHttpBaseUrl().replace(/\/+$/, '');
   const url = new URL(`${base}/api/control`);
-  console.log('url', url.toString());
   url.searchParams.set('action', action);
   url.searchParams.set('speed', String(speed));
   url.searchParams.set('time', String(Math.max(1, Math.round(time_ms))));
   try {
-    // const resp = {"ok":true, "status": 200, "text": ""};
-    await fetch(url.toString(), { method: 'GET' });
-    const text = "success";//await resp.text().catch(() => '');
+    const resp = await fetch(url.toString(), { method: 'GET' });
+    const text = await resp.text().catch(() => '');
     return {
       ok: resp.ok,
       http_status: resp.status,

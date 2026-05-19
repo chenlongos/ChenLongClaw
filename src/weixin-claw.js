@@ -27,6 +27,7 @@ import {
   extractReminderSuccessesFromAgentState,
 } from './reminderReplyFix.js';
 import { blue } from './cliColors.js';
+import { getBinding } from './bindStore.js';
 
 const skipWeixinQr = process.argv.includes('--no-weixin-login');
 const skipWeixinInbound = process.argv.includes('--no-weixin-inbound');
@@ -80,33 +81,56 @@ const skipWeixinAutoReply = process.argv.includes('--no-weixin-auto-reply');
 
   async function handleWeixinInbound({ text, fromUserId, contextToken }) {
     try {
-      let hist = wxHistories.get(fromUserId) || [];
-      hist = trimHistory(hist, { maxMessages: 24, maxApproxChars: 12000 });
-      const userLine = text;
-      console.log(blue(`收到命令：${userLine}，正在拆解执行`));
-      const { reminderSuccesses, callbacks } = createWeixinToolCallbacks();
-      let lastStateReminders = [];
-      const { text: reply } = await agentWeixin.chat(userLine, hist, {
-        toolRetries: 1,
-        ...callbacks,
-        onStep: (state) => {
-          lastStateReminders = extractReminderSuccessesFromAgentState(state);
-        },
-      });
-      const mergedReminders = [...reminderSuccesses, ...lastStateReminders];
-      const out = mergeWeixinReplyAfterReminders(reply, mergedReminders);
-      hist.push({ role: 'user', content: userLine });
-      hist.push({ role: 'assistant', content: out });
-      wxHistories.set(fromUserId, hist);
+      const binding = getBinding(fromUserId);
+      if (!binding) {
+        await sendTextMessage({
+          baseUrl: defaultBaseUrl(),
+          token: process.env.WEIXIN_ILINK_TOKEN,
+          toUserId: fromUserId,
+          text: '你尚未绑定小车。请访问 Web 控制面板，填写小车地址后扫码绑定。',
+          contextToken,
+        });
+        return;
+      }
 
-      await sendTextMessage({
-        baseUrl: defaultBaseUrl(),
-        token: process.env.WEIXIN_ILINK_TOKEN,
-        toUserId: fromUserId,
-        text: out,
-        contextToken,
-      });
-      console.log(`\n[微信] 已自动发回 (${out.length} 字): ${out.slice(0, 300)}${out.length > 300 ? '…' : ''}\n`);
+      const prevCarUrl = process.env.CAR_HTTP_BASE_URL;
+      process.env.CAR_HTTP_BASE_URL = binding.carUrl;
+
+      try {
+        let hist = wxHistories.get(fromUserId) || [];
+        hist = trimHistory(hist, { maxMessages: 24, maxApproxChars: 12000 });
+        const userLine = text;
+        console.log(blue(`收到命令：${userLine}，正在拆解执行`));
+        const { reminderSuccesses, callbacks } = createWeixinToolCallbacks();
+        let lastStateReminders = [];
+        const { text: reply } = await agentWeixin.chat(userLine, hist, {
+          toolRetries: 1,
+          ...callbacks,
+          onStep: (state) => {
+            lastStateReminders = extractReminderSuccessesFromAgentState(state);
+          },
+        });
+        const mergedReminders = [...reminderSuccesses, ...lastStateReminders];
+        const out = mergeWeixinReplyAfterReminders(reply, mergedReminders);
+        hist.push({ role: 'user', content: userLine });
+        hist.push({ role: 'assistant', content: out });
+        wxHistories.set(fromUserId, hist);
+
+        await sendTextMessage({
+          baseUrl: defaultBaseUrl(),
+          token: process.env.WEIXIN_ILINK_TOKEN,
+          toUserId: fromUserId,
+          text: out,
+          contextToken,
+        });
+        console.log(`\n[微信] 已自动发回 (${out.length} 字): ${out.slice(0, 300)}${out.length > 300 ? '…' : ''}\n`);
+      } finally {
+        if (prevCarUrl !== undefined) {
+          process.env.CAR_HTTP_BASE_URL = prevCarUrl;
+        } else {
+          delete process.env.CAR_HTTP_BASE_URL;
+        }
+      }
     } catch (e) {
       console.error('\n[微信] Agent 回复或发送失败:', e instanceof Error ? e.message : e);
     }

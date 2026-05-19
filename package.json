@@ -10,6 +10,7 @@
     "preinstall": "node scripts/vendor-openagent-core.mjs",
     "vendor:openagent": "node scripts/vendor-openagent-core.mjs",
     "start": "node src/weixin-claw.js",
+    "web": "node src/web-server.js",
     "repl": "node src/repl.js",
     "weixin-login": "node --import=dotenv/config --input-type=module -e \"import { runWeixinIlinkQrLogin } from '@openagent/core'; await runWeixinIlinkQrLogin({});\""
   },
