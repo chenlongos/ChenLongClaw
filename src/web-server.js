@@ -8,6 +8,8 @@ import './bootstrapNode.js';
 import 'dotenv/config';
 import http from 'node:http';
 import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
 import { URL } from 'node:url';
 import {
   ToolRegistry,
@@ -67,6 +69,52 @@ function getSession(sid) {
 
 /** 微信用户对话历史 */
 const wxHistories = new Map();
+
+// 微信服务状态（HTTP handler 引用，必须声明在 handler 之前）
+let stopReminders = () => {};
+let stopInbound = () => {};
+let weixinServicesStarted = false;
+let currentServiceToken = null;
+
+function startWeixinServices() {
+  const token = process.env.WEIXIN_ILINK_TOKEN?.trim();
+  if (!token || weixinServicesStarted) return;
+  weixinServicesStarted = true;
+  currentServiceToken = token;
+
+  stopReminders = startReminderScheduler(async (row) => {
+    sendTextMessage({
+      baseUrl: defaultBaseUrl(),
+      token,
+      toUserId: row.toUserId,
+      text: row.text,
+      contextToken: row.contextToken || undefined,
+    }).catch(() => {});
+  });
+  console.log('[reminder] 定时提醒已启用');
+
+  stopInbound = startWeixinInboundPoller({
+    onUserTextMessage: handleWeixinInbound,
+    onTokenExpired: async () => {
+      // 如果 token 已被 Web 扫码刷新，忽略旧服务的过期回调
+      if (process.env.WEIXIN_ILINK_TOKEN?.trim() !== currentServiceToken) {
+        console.log('[微信] 旧凭证过期回调，但 token 已刷新，忽略。');
+        return;
+      }
+      weixinServicesStarted = false;
+      currentServiceToken = null;
+      stopReminders();
+      stopInbound();
+      stopReminders = () => {};
+      stopInbound = () => {};
+      delete process.env.WEIXIN_ILINK_TOKEN;
+      const credFile = path.join(os.homedir(), '.openagent', 'weixin-ilink.json');
+      try { fs.unlinkSync(credFile); } catch {}
+      console.log('[微信] 凭证已过期，请通过 Web 页面重新扫码。');
+    },
+  });
+  console.log('微信入站：文本将经 Agent 处理后自动发回微信。');
+}
 
 // ---- 微信消息处理 ----
 async function handleWeixinInbound({ text, fromUserId, contextToken }) {
@@ -251,9 +299,7 @@ const HTML = `<!DOCTYPE html>
       <h1>小车助手</h1>
       <span class="car-badge" id="carUrlLabel" onclick="openSettings()" title="点击修改"></span>
     </div>
-    <div class="chat" id="chat">
-      <div class="msg agent">你好！输入指令控制小车，比如「前进 2 秒」「左转 1500」「走正方形」等。</div>
-    </div>
+    <div class="chat" id="chat"></div>
     <div class="chat-input-row">
       <input id="input" type="text" placeholder="输入指令…" onkeydown="if(event.key==='Enter')send()">
       <button id="sendBtn" onclick="send()">↑</button>
@@ -329,27 +375,29 @@ const HTML = `<!DOCTYPE html>
             el.textContent = '登录成功！';
             el.className = 'status-text scanned';
 
-            // 保存绑定
             currentUserId = sd.ilink_user_id;
             const carUrl = getCarUrl();
-            await fetch('/api/bind', {
+
+            // 保存绑定和 session（不阻塞页面跳转）
+            fetch('/api/bind', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ userId: sd.ilink_user_id, carUrl }),
-            });
+            }).catch(function(){});
 
-            // 注册 session
-            await fetch('/api/session', {
+            fetch('/api/session', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ sessionId: SID, userId: sd.ilink_user_id, carUrl }),
-            });
+            }).catch(function(){});
 
             // 切换到聊天页
-            setTimeout(() => {
+            setTimeout(function() {
               $('loginPage').style.display = 'none';
               $('chatPage').style.display = 'flex';
               $('carUrlLabel').textContent = carUrl;
+              loadHistory();
+              startHistoryPolling();
             }, 800);
           } else if (sd.status === 'expired') {
             clearInterval(bindPollTimer);
@@ -397,12 +445,70 @@ const HTML = `<!DOCTYPE html>
   generateQR();
 
   // ---- 聊天 ----
+  let serverMsgCount = 0;
+
   function addMsg(role, text) {
     const div = document.createElement('div');
     div.className = 'msg ' + role;
     div.textContent = text;
     $('chat').appendChild(div);
     $('chat').scrollTop = $('chat').scrollHeight;
+  }
+
+  function clearChat() {
+    $('chat').innerHTML = '';
+    serverMsgCount = 0;
+  }
+
+  async function loadHistory() {
+    try {
+      const resp = await fetch('/api/history?sessionId=' + SID);
+      const data = await resp.json();
+      clearChat();
+      if (data.tokenAlive === false) {
+        addMsg('agent', '微信凭证已过期，请刷新页面重新扫码登录。');
+        return;
+      }
+      if (!data.messages || data.messages.length === 0) {
+        addMsg('agent', '你好！输入指令控制小车，比如「前进 2 秒」「左转 1500」「走正方形」等。');
+      } else {
+        for (const m of data.messages) {
+          addMsg(m.role, m.content);
+        }
+        serverMsgCount = data.messages.length;
+      }
+    } catch (e) { console.error('loadHistory error:', e); }
+  }
+
+  let historyPollTimer = null;
+  function startHistoryPolling() {
+    if (historyPollTimer) clearInterval(historyPollTimer);
+    historyPollTimer = setInterval(async () => {
+      try {
+        const resp = await fetch('/api/history?sessionId=' + SID);
+        const data = await resp.json();
+        // Token 过期：退回登录页重新扫码
+        if (data.tokenAlive === false) {
+          clearInterval(historyPollTimer);
+          addMsg('agent', '微信凭证已过期，请刷新页面重新扫码登录。');
+          return;
+        }
+        if (data.messages && data.messages.length > serverMsgCount) {
+          for (let i = serverMsgCount; i < data.messages.length; i++) {
+            addMsg(data.messages[i].role, data.messages[i].content);
+          }
+          serverMsgCount = data.messages.length;
+        }
+      } catch (e) { console.error('poll error:', e); }
+    }, 3000);
+  }
+
+  async function syncMsgCount() {
+    try {
+      const resp = await fetch('/api/history?sessionId=' + SID);
+      const data = await resp.json();
+      if (data.messages) serverMsgCount = data.messages.length;
+    } catch (e) { console.error('syncMsgCount error:', e); }
   }
 
   function addThinking() {
@@ -429,6 +535,7 @@ const HTML = `<!DOCTYPE html>
       const data = await resp.json();
       removeThinking();
       addMsg('agent', data.text || '（无回复）');
+      syncMsgCount();
     } catch (e) {
       removeThinking();
       addMsg('agent', '错误: ' + e.message);
@@ -500,14 +607,23 @@ const server = http.createServer(async (req, res) => {
 
         const sess = sessionId ? getSession(sessionId) : { history: [], carUrl: null };
 
+        // 已绑定用户：与微信共享同一份历史记录
+        let hist;
+        if (sess.userId) {
+          if (!wxHistories.has(sess.userId)) wxHistories.set(sess.userId, []);
+          hist = wxHistories.get(sess.userId);
+        } else {
+          hist = sess.history;
+        }
+
         const prevCarUrl = process.env.CAR_HTTP_BASE_URL;
         if (sess.carUrl) process.env.CAR_HTTP_BASE_URL = sess.carUrl;
 
         try {
-          const result = await agent.chat(text, sess.history, { toolRetries: 1 });
-          sess.history.push({ role: 'user', content: text });
-          sess.history.push({ role: 'assistant', content: result.text || '' });
-          if (sess.history.length > 30) sess.history.splice(0, sess.history.length - 30);
+          const result = await agent.chat(text, hist, { toolRetries: 1 });
+          hist.push({ role: 'user', content: text });
+          hist.push({ role: 'assistant', content: result.text || '' });
+          if (hist.length > 30) hist.splice(0, hist.length - 30);
           json(200, { ok: true, text: result.text || '' });
         } finally {
           if (prevCarUrl !== undefined) {
@@ -534,6 +650,18 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         json(400, { ok: false });
       }
+      return;
+    }
+
+    // 获取共享历史记录
+    if (url.pathname === '/api/history' && req.method === 'GET') {
+      const sid = url.searchParams.get('sessionId');
+      if (!sid) { json(400, { ok: false }); return; }
+      const sess = sessions.get(sid);
+      if (!sess?.userId) { json(200, { ok: true, messages: [] }); return; }
+      const hist = wxHistories.get(sess.userId) || [];
+      const tokenAlive = !!process.env.WEIXIN_ILINK_TOKEN?.trim();
+      json(200, { ok: true, tokenAlive, messages: hist.map((m) => ({ role: m.role, content: m.content })) });
       return;
     }
 
@@ -599,8 +727,37 @@ const server = http.createServer(async (req, res) => {
           label: 'get_qrcode_status',
         });
         const data = JSON.parse(raw);
-        json(200, { status: data.status, ilink_user_id: data.ilink_user_id || null });
+        // 确认登录时保存 bot_token 并启动微信服务
+        // 注意：文件操作不能影响 API 响应，否则前端收不到 confirmed 状态
+        if (data.status === 'confirmed' && data.bot_token) {
+          console.log('[qr] 扫码确认，刷新凭证...');
+          // 停掉旧的过期服务，准备用新 token 重启
+          stopReminders();
+          stopInbound();
+          stopReminders = () => {};
+          stopInbound = () => {};
+          weixinServicesStarted = false;
+          currentServiceToken = null;
+
+          process.env.WEIXIN_ILINK_TOKEN = data.bot_token;
+          if (data.baseurl) {
+            process.env.WEIXIN_ILINK_BASE_URL = data.baseurl.endsWith('/') ? data.baseurl : data.baseurl + '/';
+          }
+          try {
+            const credDir = path.join(os.homedir(), '.openagent');
+            fs.mkdirSync(credDir, { recursive: true });
+            fs.writeFileSync(path.join(credDir, 'weixin-ilink.json'), JSON.stringify({
+              token: data.bot_token,
+              baseUrl: data.baseurl || FIXED_ILINK_BASE,
+              userId: data.ilink_user_id,
+              savedAt: new Date().toISOString(),
+            }, null, 2));
+          } catch { /* 文件写入失败不影响登录流程 */ }
+          startWeixinServices();
+        }
+        json(200, { status: data.status, ilink_user_id: data.ilink_user_id || data.userId || null });
       } catch (err) {
+        console.error('[qr status]', err instanceof Error ? err.message : err);
         json(200, { status: 'wait' });
       }
       return;
@@ -650,39 +807,7 @@ function getNetworkUrls(port) {
 
 // ---- 启动 ----
 (async function main() {
-  // 微信 iLink 登录 (服务端 Bot 凭证)
-  const wx = await ensureWeixinIlinkLogin({ skipInteractive: false });
-  if (wx.source === 'none' && !process.env.WEIXIN_ILINK_TOKEN?.trim()) {
-    console.log('提示：未检测到微信凭证。可设置 WEIXIN_ILINK_TOKEN 或重新运行以扫码。');
-  } else if (wx.source === 'file' || wx.source === 'qr') {
-    console.log('微信 iLink：已加载凭证（来源: ' + (wx.source === 'qr' ? '本次扫码' : '本地文件') + '）');
-  }
-
-  // 提醒定时器
-  let stopReminders = () => {};
-  if (process.env.WEIXIN_ILINK_TOKEN?.trim()) {
-    stopReminders = startReminderScheduler(async (row) => {
-      await sendTextMessage({
-        baseUrl: defaultBaseUrl(),
-        token: process.env.WEIXIN_ILINK_TOKEN,
-        toUserId: row.toUserId,
-        text: row.text,
-        contextToken: row.contextToken || undefined,
-      });
-    });
-    console.log('[reminder] 定时提醒已启用');
-  }
-
-  // 微信入站轮询
-  let stopInbound = () => {};
-  if (process.env.WEIXIN_ILINK_TOKEN?.trim()) {
-    stopInbound = startWeixinInboundPoller({
-      onUserTextMessage: handleWeixinInbound,
-    });
-    console.log('微信入站：文本将经 Agent 处理后自动发回微信。');
-  }
-
-  // Web 服务
+  // 先启动 Web 服务，不阻塞
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.error('端口 ' + PORT + ' 已被占用，请先关闭占用进程或设置 WEB_PORT 环境变量。');
@@ -692,19 +817,30 @@ function getNetworkUrls(port) {
     process.exit(1);
   });
 
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log('');
-    console.log('小车助手已启动:');
-    console.log('  本地: http://localhost:' + PORT);
-    const nets = getNetworkUrls(PORT);
-    if (nets.length) {
-      console.log('  局域网: ' + nets[0]);
-      nets.slice(1).forEach((u) => console.log('          ' + u));
+  await new Promise((resolve) => server.listen(PORT, resolve));
+  console.log('');
+  console.log('小车助手已启动:');
+  console.log('  本地: http://localhost:' + PORT);
+  const nets = getNetworkUrls(PORT);
+  if (nets.length) {
+    console.log('  局域网: ' + nets[0]);
+    nets.slice(1).forEach((u) => console.log('          ' + u));
+  }
+  console.log('已注册工具: ' + registry.listNames().join(', '));
+  console.log('');
+
+  // 尝试从缓存文件加载已有 token，有则启动
+  async function tryLoadCachedToken() {
+    const wx = await ensureWeixinIlinkLogin({ skipInteractive: true });
+    if (wx.source !== 'none') {
+      console.log('微信 iLink：已加载凭证（来源: ' + (wx.source === 'file' ? '本地文件' : wx.source) + '）');
+      startWeixinServices();
+    } else {
+      console.log('提示：未检测到微信凭证，请通过 Web 页面扫码登录。');
     }
-    console.log('');
-    console.log('已注册工具: ' + registry.listNames().join(', '));
-    console.log('按 Ctrl+C 停止');
-  });
+  }
+
+  tryLoadCachedToken();
 
   process.once('SIGINT', () => {
     stopInbound();

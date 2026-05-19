@@ -30,8 +30,8 @@ export function extractInboundTextOnly(msg) {
 }
 
 export function startWeixinInboundPoller(options = {}) {
-  const token = process.env.WEIXIN_ILINK_TOKEN?.trim();
-  if (!token) return () => {};
+  const initialToken = process.env.WEIXIN_ILINK_TOKEN?.trim();
+  if (!initialToken) return () => {};
 
   let buf = '';
   let stopped = false;
@@ -47,6 +47,7 @@ export function startWeixinInboundPoller(options = {}) {
   const loop = async () => {
     while (!stopped) {
       try {
+        const token = process.env.WEIXIN_ILINK_TOKEN?.trim();
         const resp = await getUpdates({
           baseUrl,
           token,
@@ -54,7 +55,18 @@ export function startWeixinInboundPoller(options = {}) {
           timeoutMs,
         });
         if (resp.errcode === -14) {
-          console.error('\n[微信] 会话过期 (errcode -14)，请重新运行本程序并扫码。\n');
+          if (options.onTokenExpired) {
+            console.error('\n[微信] 会话过期 (errcode -14)，尝试重新登录...\n');
+            try {
+              await options.onTokenExpired();
+              buf = '';
+              continue;
+            } catch (reAuthErr) {
+              console.error('\n[微信] 重新登录失败:', reAuthErr instanceof Error ? reAuthErr.message : reAuthErr);
+            }
+          } else {
+            console.error('\n[微信] 会话过期 (errcode -14)，请重新运行本程序并扫码。\n');
+          }
           break;
         }
         if (typeof resp.ret === 'number' && resp.ret !== 0 && resp.errcode !== undefined && resp.errcode !== 0) {
